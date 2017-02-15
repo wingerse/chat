@@ -28,11 +28,7 @@ type Server struct {
 	m           sync.RWMutex
 }
 
-<<<<<<< HEAD
 // NewServer starts listening, and returns an initialized server. If an error occured while listening started, (nil, error) is returned.
-=======
-// NewServer starts listening, and returns an initialized server. If an error occured while listening started, nil, error is returned.
->>>>>>> c6031f3d8e160d015eaf01d071b9426e4f89379a
 func NewServer(name string, port uint16) (*Server, error) {
 	p := strconv.FormatUint(uint64(port), 10)
 	l, e := net.Listen("tcp", "localhost:"+p)
