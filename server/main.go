@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	r, e := chat.NewRoom("test", 5000)
+	r, e := chat.NewServer("test", 5000)
 	if e != nil {
 		fmt.Println(e)
 	}

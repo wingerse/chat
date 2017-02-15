@@ -19,7 +19,7 @@ type client struct {
 	name   string
 }
 
-type Room struct {
+type Server struct {
 	l           net.Listener
 	clients     map[*client]struct{}
 	messageChan chan message
@@ -28,16 +28,16 @@ type Room struct {
 	m           sync.RWMutex
 }
 
-func NewRoom(name string, port uint16) (*Room, error) {
+func NewServer(name string, port uint16) (*Server, error) {
 	p := strconv.FormatUint(uint64(port), 10)
 	l, e := net.Listen("tcp", "localhost:"+p)
 	if e != nil {
 		return nil, e
 	}
-	return &Room{l, make(map[*client]struct{}), make(chan message), port, name, sync.RWMutex{}}, nil
+	return &Server{l, make(map[*client]struct{}), make(chan message), port, name, sync.RWMutex{}}, nil
 }
 
-func (r *Room) Start() {
+func (r *Server) Start() {
 	go r.sendMessages()
 	for {
 		conn, e := r.l.Accept()
@@ -48,7 +48,7 @@ func (r *Room) Start() {
 	}
 }
 
-func (r *Room) handleConn(conn net.Conn) {
+func (r *Server) handleConn(conn net.Conn) {
 	reader := bufio.NewReader(conn)
 	name, e := reader.ReadString('\n')
 	name = strings.TrimSpace(name)
@@ -63,7 +63,7 @@ func (r *Room) handleConn(conn net.Conn) {
 	r.handleClient(c)
 }
 
-func (r *Room) handleClient(c *client) {
+func (r *Server) handleClient(c *client) {
 	for {
 		msg, e := c.reader.ReadString('\n')
 		if e == io.EOF {
@@ -78,7 +78,7 @@ func (r *Room) handleClient(c *client) {
 	}
 }
 
-func (r *Room) sendMessages() {
+func (r *Server) sendMessages() {
 	for {
 		m := <-r.messageChan
 		r.m.RLock()
@@ -92,7 +92,7 @@ func (r *Room) sendMessages() {
 	}
 }
 
-func (r *Room) publishMessage(msg string) {
+func (r *Server) publishMessage(msg string) {
 	r.m.RLock()
 	for k := range r.clients {
 		go k.conn.Write([]byte(msg))
@@ -101,13 +101,13 @@ func (r *Room) publishMessage(msg string) {
 	fmt.Print(msg)
 }
 
-func (r *Room) addClient(c *client) {
+func (r *Server) addClient(c *client) {
 	r.m.Lock()
 	r.clients[c] = struct{}{}
 	r.m.Unlock()
 }
 
-func (r *Room) deleteClient(c *client) {
+func (r *Server) deleteClient(c *client) {
 	r.m.Lock()
 	delete(r.clients, c)
 	r.m.Unlock()
