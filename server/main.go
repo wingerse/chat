@@ -12,9 +12,27 @@ func main() {
 	}
 
 	r.RegisterCommand("kick", kickCommand)
+	r.RegisterCommand("list", listCommand)
 	r.Start()
 }
 
+func listCommand(s *chat.Server, args []string) {
+	fmt.Println("List of online people:")
+	for n, c := range s.Clients {
+		fmt.Printf("%v(%v)\n", n, c.Conn.RemoteAddr())
+	}
+}
+
+
 func kickCommand(s *chat.Server, args []string) {
-	fmt.Println("Test")
+	if len(args) != 1 {
+		fmt.Println("kick: invalid format. use /kick <name>")
+		return
+	}
+	name := args[0]
+	if c, present := s.Clients[name]; present {
+		s.RemoveClient(c)
+	} else {
+		fmt.Println("kick: there is no user online named "+name)
+	}
 }

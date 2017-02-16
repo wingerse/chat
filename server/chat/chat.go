@@ -10,11 +10,11 @@ import "os"
 
 type message struct {
 	message string
-	client  *client
+	client  *Client
 }
 
 func (m message) getFormatted() string {
-	return m.client.name + ": " + m.message + "\n"
+	return m.client.Name + ": " + m.message + "\n"
 }
 
 type nameCheck struct {
@@ -22,23 +22,24 @@ type nameCheck struct {
 	present bool
 }
 
-type client struct {
-	conn net.Conn
-	name string
+type Client struct {
+	Conn net.Conn
+	Name string
 }
 
+// Server represents a chat server
 type Server struct {
 	L             net.Listener
-	Clients       map[*client]struct{}
+	Clients       map[string]*Client
 	messageChan   chan message
-	addedChan     chan *client
-	removedChan   chan *client
+	addedChan     chan *Client
+	removedChan   chan *Client
 	nameCheckChan chan nameCheck
-	cmdChan       chan command
+	cmdChan       chan Command
 	printChan     chan string
 	Port          uint16
 	Name          string
-	commands      map[string]command
+	commands      map[string]Command
 }
 
 // NewServer starts listening, and returns an initialized server. If an error occured while listening started, (nil, error) is returned.
@@ -50,21 +51,22 @@ func NewServer(name string, port uint16) (*Server, error) {
 	}
 	return &Server{
 			L:             l,
-			Clients:       make(map[*client]struct{}),
+			Clients:       make(map[string]*Client),
 			messageChan:   make(chan message, 2),
-			addedChan:     make(chan *client, 2),
-			removedChan:   make(chan *client, 2),
+			addedChan:     make(chan *Client),
+			removedChan:   make(chan *Client),
 			nameCheckChan: make(chan nameCheck),
-			cmdChan:       make(chan command),
-			printChan:     make(chan string),
+			cmdChan:       make(chan Command),
+			printChan:     make(chan string, 10),
 			Port:          port,
 			Name:          name,
-			commands:      make(map[string]command)},
+			commands:      make(map[string]Command)},
 		nil
 }
 
+// RegisterCommand registers a command which will then be executed when /name is written.
 func (r *Server) RegisterCommand(name string, handler func(s *Server, args []string)) {
-	r.commands[name] = command{name, nil, handler}
+	r.commands[name] = Command{name, nil, handler}
 }
 
 // Start starts accepting clients + managing messages.
@@ -97,18 +99,11 @@ func (r *Server) handleCommands() {
 			r.printChan <- invalidFormat
 			continue
 		}
-		//dispatch to correct command
-		if c, ok := r.commands[args[0]]; ok {
-			c.args = args[1:]
-			r.cmdChan <- c
-		} else {
-			r.printChan <- "No such comand exists\n"
-		}
+		r.ExecuteCommand(args[0], args[1:])
 	}
 }
 
 func (r *Server) handleClient(conn net.Conn) {
-	defer conn.Close()
 	scanner := bufio.NewScanner(conn)
 	if !scanner.Scan() {
 		return
@@ -121,7 +116,7 @@ func (r *Server) handleClient(conn net.Conn) {
 		return
 	}
 
-	c := &client{conn, name}
+	c := &Client{conn, name}
 	r.addClient(c)
 	defer r.RemoveClient(c)
 
@@ -145,55 +140,65 @@ func (r *Server) handleMessages() {
 	for {
 		select {
 		case n := <-r.nameCheckChan:
-			present := false
-			for k := range r.Clients {
-				if k.name == n.name {
-					present = true
-				}
-			}
+			_, present := r.Clients[n.name]
 			r.nameCheckChan <- nameCheck{n.name, present}
 		case c := <-r.addedChan:
-			r.Clients[c] = struct{}{}
-			r.publishMessage(c.name + " has connected to the server\n")
-			log.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has connected to the server")
+			r.Clients[c.Name] = c
+			r.publishMessage(c.Name + " has connected to the server\n")
+			log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has connected to the server")
 		case m := <-r.messageChan:
-			for k := range r.Clients {
-				if k != m.client {
-					go k.conn.Write([]byte(m.getFormatted()))
+			for _, c := range r.Clients {
+				if c != m.client {
+					go c.Conn.Write([]byte(m.getFormatted()))
 				}
 			}
 			log.Print(m.getFormatted())
 		case c := <-r.removedChan:
-			_, existed := r.Clients[c]
-			delete(r.Clients, c)
-			if existed {
-				r.publishMessage(c.name + " has disconnected from the server\n")
-				log.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has disconnected from the server")
+			for n, cl := range r.Clients {
+				if cl == c {
+					delete(r.Clients, n)
+					cl.Conn.Close()
+					r.publishMessage(c.Name + " has disconnected from the server\n")
+					log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has disconnected from the server")
+				}
 			}
 		case s := <-r.printChan:
 			fmt.Print(s)
 		case c := <-r.cmdChan:
-			c.handler(r, c.args)
+			go c.handler(r, c.args)
 		}
 
 	}
 }
 
-func (r *Server) publishMessage(msg string) {
-	for k := range r.Clients {
-		go k.conn.Write([]byte(msg))
+// ExecuteCommand executes a command given its name and args.
+func (r *Server) ExecuteCommand(name string, args []string) {
+	// this function ^ should be called from a different goroutine than handleMessages because the command should be able to do everything without blocking others
+	if c, ok := r.commands[name]; ok {
+		c.args = args
+		r.cmdChan <- c
+	} else {
+		r.printChan <- "No such command exists\n"
 	}
 }
 
-func (r *Server) addClient(c *client) {
+func (r *Server) publishMessage(msg string) {
+	for _, c := range r.Clients {
+		go c.Conn.Write([]byte(msg))
+	}
+}
+
+func (r *Server) addClient(c *Client) {
 	r.addedChan <- c
 }
 
-func (r *Server) RemoveClient(c *client) {
+// RemoveClient removes the specified client from the server. It disconnects the client, as well as remove it from the server's list.
+func (r *Server) RemoveClient(c *Client) {
 	r.removedChan <- c
 }
 
-type command struct {
+// Command is a data struct holding information about a command.
+type Command struct {
 	name    string
 	args    []string
 	handler func(s *Server, args []string)
