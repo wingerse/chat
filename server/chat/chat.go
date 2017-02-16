@@ -95,7 +95,7 @@ func (r *Server) handleMessages() {
 		case c := <-r.addedChan:
 			r.clients[c] = struct{}{}
 			r.publishMessage(c.name + " has connected to the server\n")
-			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has connected to the server")
+			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has disconnected from the server")
 		case m := <-r.messageChan:
 			for k := range r.clients {
 				if k != m.client {
@@ -105,8 +105,8 @@ func (r *Server) handleMessages() {
 			fmt.Print(m.getFormatted())
 		case c := <-r.removedChan:
 			delete(r.clients, c)
-			r.publishMessage(c.name + " has connected to the server\n")
-			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has disconnected to the server")
+			r.publishMessage(c.name + " has disconnected from the server\n")
+			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has disconnected from the server")
 		}
 	}
 }
