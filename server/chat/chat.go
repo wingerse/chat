@@ -4,7 +4,6 @@ import "net"
 import "bufio"
 import "strconv"
 import "sync"
-import "io"
 import "strings"
 import "fmt"
 
@@ -13,16 +12,21 @@ type message struct {
 	client  *client
 }
 
+func (m message) getFormatted() string {
+	return m.client.name + ": " + m.message + "\n"
+}
+
 type client struct {
-	conn   net.Conn
-	reader *bufio.Reader
-	name   string
+	conn net.Conn
+	name string
 }
 
 type Server struct {
 	l           net.Listener
 	clients     map[*client]struct{}
 	messageChan chan message
+	addedChan   chan *client
+	removedChan chan *client
 	port        uint16
 	name        string
 	m           sync.RWMutex
@@ -35,82 +39,88 @@ func NewServer(name string, port uint16) (*Server, error) {
 	if e != nil {
 		return nil, e
 	}
-	return &Server{l, make(map[*client]struct{}), make(chan message), port, name, sync.RWMutex{}}, nil
+	return &Server{l: l,
+			clients:     make(map[*client]struct{}),
+			messageChan: make(chan message, 2),
+			addedChan:   make(chan *client, 2),
+			removedChan: make(chan *client, 2),
+			port:        port,
+			name:        name},
+		nil
 }
 
 // Start starts accepting clients + managing messages.
 func (r *Server) Start() {
-	go r.sendMessages()
+	go r.handleMessages()
 	for {
 		conn, e := r.l.Accept()
 		if e != nil {
 			continue
 		}
-		go r.handleConn(conn)
+		go r.handleClient(conn)
 	}
 }
 
-func (r *Server) handleConn(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	name, e := reader.ReadString('\n')
-	name = strings.TrimSpace(name)
-	if e != nil {
-		conn.Close()
+func (r *Server) handleClient(conn net.Conn) {
+	defer conn.Close()
+	scanner := bufio.NewScanner(conn)
+	if !scanner.Scan() {
 		return
 	}
+	name := strings.TrimSpace(scanner.Text())
 
-	c := &client{conn, reader, name}
+	c := &client{conn, name}
 	r.addClient(c)
-	r.publishMessage(c.name + " has joined the server\n")
-	r.handleClient(c)
-}
+	defer r.removeClient(c)
 
-func (r *Server) handleClient(c *client) {
 	for {
-		msg, e := c.reader.ReadString('\n')
-		if e == io.EOF {
-			c.conn.Close()
-			r.deleteClient(c)
-			r.publishMessage(c.name + " has left the server\n")
-			return
-		} else if e != nil {
+		if !scanner.Scan() {
+			if scanner.Err() == nil {
+				return
+			}
+			if t, ok := scanner.Err().(net.Error); ok {
+				if t.Timeout() {
+					return
+				}
+			} 
 			continue
 		}
-		r.messageChan <- message{c.name + ": " + msg, c}
+		r.messageChan <- message{scanner.Text(), c}
 	}
 }
 
-func (r *Server) sendMessages() {
+func (r *Server) handleMessages() {
 	for {
-		m := <-r.messageChan
-		r.m.RLock()
-		for k := range r.clients {
-			if k != m.client {
-				go k.conn.Write([]byte(m.message))
+		select {
+		case c := <-r.addedChan:
+			r.clients[c] = struct{}{}
+			r.publishMessage(c.name + " has connected to the server\n")
+			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has connected to the server")
+		case m := <-r.messageChan:
+			for k := range r.clients {
+				if k != m.client {
+					go k.conn.Write([]byte(m.getFormatted()))
+				}
 			}
+			fmt.Print(m.getFormatted())
+		case c := <-r.removedChan:
+			delete(r.clients, c)
+			r.publishMessage(c.name + " has connected to the server\n")
+			fmt.Println(c.name + "(" + c.conn.RemoteAddr().String() + ")" + " has disconnected to the server")
 		}
-		r.m.RUnlock()
-		fmt.Print(m.message)
 	}
 }
 
 func (r *Server) publishMessage(msg string) {
-	r.m.RLock()
 	for k := range r.clients {
 		go k.conn.Write([]byte(msg))
 	}
-	r.m.RUnlock()
-	fmt.Print(msg)
 }
 
 func (r *Server) addClient(c *client) {
-	r.m.Lock()
-	r.clients[c] = struct{}{}
-	r.m.Unlock()
+	r.addedChan <- c
 }
 
-func (r *Server) deleteClient(c *client) {
-	r.m.Lock()
-	delete(r.clients, c)
-	r.m.Unlock()
+func (r *Server) removeClient(c *client) {
+	r.removedChan <- c
 }

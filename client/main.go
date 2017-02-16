@@ -8,20 +8,18 @@ import (
 	"os"
 )
 
-func main() {
+var endChan = make(chan struct{})
 
+func main() {
 	name := getName()
 	conn, e := connect()
 	handleError(e)
+	defer conn.Close()
 	fmt.Fprintln(conn, name)
 	go receiveMessages(conn)
-	b := bufio.NewReader(os.Stdin)
-	for {
-		text, e := b.ReadString('\n')
-		handleError(e)
-		_, e = conn.Write([]byte(text))
-		handleError(e)
-	}
+	go sendMessages(conn)
+	<-endChan
+	fmt.Println("Server closed")
 }
 
 func connect() (*net.TCPConn, error) {
@@ -32,9 +30,23 @@ func connect() (*net.TCPConn, error) {
 	return net.DialTCP("tcp", nil, addr)
 }
 
+func sendMessages(conn *net.TCPConn) {
+	s := bufio.NewScanner(os.Stdin)
+	for s.Scan() {
+		_, e := conn.Write([]byte(s.Text() + "\n"))
+		if e != nil {
+			fmt.Println(e)
+		}
+	}
+} 
+
 func receiveMessages(conn *net.TCPConn) {
 	for {
-		io.Copy(os.Stdout, conn)
+		_, e := io.Copy(os.Stdout, conn)
+		if e == nil {
+			endChan <- struct{}{}
+			return
+		}
 	}
 }
 
