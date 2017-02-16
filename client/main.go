@@ -19,7 +19,7 @@ func main() {
 	go receiveMessages(conn)
 	go sendMessages(conn)
 	<-endChan
-	fmt.Println("Server closed")
+	fmt.Println("Connection closed")
 }
 
 func connect() (*net.TCPConn, error) {
