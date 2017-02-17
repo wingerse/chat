@@ -72,6 +72,7 @@ func (r *Server) RegisterCommand(name string, handler func(s *Server, args []str
 // Start starts accepting clients + managing messages.
 func (r *Server) Start() {
 	log.SetOutput(os.Stdout)
+	r.RegisterCommand("help", helpCommand)
 	log.Println("starting server at " + r.L.Addr().String())
 	go r.handleCommands()
 	go r.handleMessages()
@@ -82,6 +83,14 @@ func (r *Server) Start() {
 		}
 		go r.handleClient(conn)
 	}
+}
+
+func helpCommand(s *Server, args []string) {
+	fmt.Println("List of commands:")
+	for _, command := range s.commands {
+		fmt.Printf("%s,", command.name)
+	}
+	fmt.Println()
 }
 
 func (r *Server) handleCommands() {
@@ -113,20 +122,23 @@ func (r *Server) handleClient(conn net.Conn) {
 	r.nameCheckChan <- nameCheck{name: name}
 	if n := <-r.nameCheckChan; n.present {
 		conn.Write([]byte("A user with that name is already online. Choose another name\n"))
+		conn.Close()
 		return
 	}
 
 	c := &Client{conn, name}
-	r.addClient(c)
-	defer r.RemoveClient(c)
+	r.addClientSafe(c)
+	
 
 	for {
 		if !scanner.Scan() {
 			if scanner.Err() == nil {
+				r.RemoveClient(c)
 				return
 			}
 			if t, ok := scanner.Err().(net.Error); ok {
 				if t.Timeout() {
+					r.RemoveClient(c)
 					return
 				}
 			}
@@ -143,9 +155,7 @@ func (r *Server) handleMessages() {
 			_, present := r.Clients[n.name]
 			r.nameCheckChan <- nameCheck{n.name, present}
 		case c := <-r.addedChan:
-			r.Clients[c.Name] = c
-			r.publishMessage(c.Name + " has connected to the server\n")
-			log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has connected to the server")
+			r.AddClient(c)
 		case m := <-r.messageChan:
 			for _, c := range r.Clients {
 				if c != m.client {
@@ -154,18 +164,11 @@ func (r *Server) handleMessages() {
 			}
 			log.Print(m.getFormatted())
 		case c := <-r.removedChan:
-			for n, cl := range r.Clients {
-				if cl == c {
-					delete(r.Clients, n)
-					cl.Conn.Close()
-					r.publishMessage(c.Name + " has disconnected from the server\n")
-					log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has disconnected from the server")
-				}
-			}
+			r.RemoveClient(c)
 		case s := <-r.printChan:
 			fmt.Print(s)
 		case c := <-r.cmdChan:
-			go c.handler(r, c.args)
+			c.handler(r, c.args)
 		}
 
 	}
@@ -182,19 +185,36 @@ func (r *Server) ExecuteCommand(name string, args []string) {
 	}
 }
 
-func (r *Server) publishMessage(msg string) {
+func (r *Server) PublishMessage(msg string) {
 	for _, c := range r.Clients {
 		go c.Conn.Write([]byte(msg))
 	}
 }
 
-func (r *Server) addClient(c *Client) {
+func (r *Server) AddClient(c *Client) {
+	r.Clients[c.Name] = c
+	r.PublishMessage(c.Name + " has connected to the server\n")
+	log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has connected to the server")
+}
+
+func (r *Server) addClientSafe(c *Client) {
 	r.addedChan <- c
+}
+
+func (r *Server) removeClientSafe(c *Client) {
+	r.removedChan <- c
 }
 
 // RemoveClient removes the specified client from the server. It disconnects the client, as well as remove it from the server's list.
 func (r *Server) RemoveClient(c *Client) {
-	r.removedChan <- c
+	for n, cl := range r.Clients {
+		if cl == c {
+			delete(r.Clients, n)
+			cl.Conn.Close()
+			r.PublishMessage(c.Name + " has disconnected from the server\n")
+			log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has disconnected from the server")
+		}
+	}
 }
 
 // Command is a data struct holding information about a command.

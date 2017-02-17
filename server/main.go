@@ -19,10 +19,10 @@ func main() {
 func listCommand(s *chat.Server, args []string) {
 	fmt.Println("List of online people:")
 	for n, c := range s.Clients {
-		fmt.Printf("%v(%v)\n", n, c.Conn.RemoteAddr())
+		fmt.Printf("%v(%v),", n, c.Conn.RemoteAddr())
 	}
+	fmt.Println()
 }
-
 
 func kickCommand(s *chat.Server, args []string) {
 	if len(args) != 1 {
