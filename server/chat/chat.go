@@ -108,7 +108,7 @@ func (r *Server) handleCommands() {
 			r.printChan <- invalidFormat
 			continue
 		}
-		r.ExecuteCommand(args[0], args[1:])
+		r.executeCommand(args[0], args[1:])
 	}
 }
 
@@ -128,7 +128,6 @@ func (r *Server) handleClient(conn net.Conn) {
 
 	c := &Client{conn, name}
 	r.addClientSafe(c)
-	
 
 	for {
 		if !scanner.Scan() {
@@ -174,8 +173,7 @@ func (r *Server) handleMessages() {
 	}
 }
 
-// ExecuteCommand executes a command given its name and args.
-func (r *Server) ExecuteCommand(name string, args []string) {
+func (r *Server) executeCommand(name string, args []string) {
 	// this function ^ should be called from a different goroutine than handleMessages because the command should be able to do everything without blocking others
 	if c, ok := r.commands[name]; ok {
 		c.args = args
