@@ -13,6 +13,7 @@ func main() {
 
 	r.RegisterCommand("kick", kickCommand)
 	r.RegisterCommand("list", listCommand)
+	r.RegisterCommand("kickall", allKickCommand)
 	r.Start()
 }
 
@@ -34,5 +35,11 @@ func kickCommand(s *chat.Server, args []string) {
 		s.RemoveClient(c)
 	} else {
 		fmt.Println("kick: there is no user online named "+name)
+	}
+}
+
+func allKickCommand(s *chat.Server, args []string) {
+	for _, c := range s.Clients {
+		s.RemoveClient(c)
 	}
 }
