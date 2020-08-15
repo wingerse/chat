@@ -2,11 +2,32 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"strconv"
+
 	"github.com/wsendon/chat/server/chat"
 )
 
+func parseArgs() int {
+	switch len(os.Args) {
+	case 1:
+		return 5000
+	case 2:
+		i, e := strconv.Atoi(os.Args[1])
+		if e != nil || i < 0 {
+			fmt.Println("Invalid port")
+			os.Exit(1)
+		}
+		return i
+	default:
+		fmt.Println("format: server [port]")
+		os.Exit(1)
+		return 0
+	}
+}
+
 func main() {
-	r, e := chat.NewServer("test", 5000)
+	r, e := chat.NewServer("test", uint16(parseArgs()))
 	if e != nil {
 		fmt.Println(e)
 	}
@@ -34,7 +55,7 @@ func kickCommand(s *chat.Server, args []string) {
 	if c, present := s.Clients[name]; present {
 		s.RemoveClient(c)
 	} else {
-		fmt.Println("kick: there is no user online named "+name)
+		fmt.Println("kick: there is no user online named " + name)
 	}
 }
 

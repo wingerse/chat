@@ -12,7 +12,9 @@ var endChan = make(chan struct{})
 
 func main() {
 	name := getName()
-	conn, e := connect()
+	serverIP := getServerIP()
+
+	conn, e := connect(serverIP)
 	handleError(e)
 	defer conn.Close()
 	fmt.Fprintln(conn, name)
@@ -22,8 +24,8 @@ func main() {
 	fmt.Println("Connection closed")
 }
 
-func connect() (*net.TCPConn, error) {
-	addr, e := net.ResolveTCPAddr("tcp", "localhost:5000")
+func connect(serverIP string) (*net.TCPConn, error) {
+	addr, e := net.ResolveTCPAddr("tcp", serverIP)
 	if e != nil {
 		return nil, e
 	}
@@ -38,7 +40,7 @@ func sendMessages(conn *net.TCPConn) {
 			fmt.Println(e)
 		}
 	}
-} 
+}
 
 func receiveMessages(conn *net.TCPConn) {
 	for {
@@ -51,11 +53,18 @@ func receiveMessages(conn *net.TCPConn) {
 }
 
 func getName() string {
-	if len(os.Args) != 2 {
+	if len(os.Args) < 2 {
 		fmt.Println("No name given")
 		os.Exit(1)
 	}
 	return os.Args[1]
+}
+
+func getServerIP() string {
+	if len(os.Args) < 3 {
+		return "localhost:5000"
+	}
+	return os.Args[2]
 }
 
 func handleError(e error) {
