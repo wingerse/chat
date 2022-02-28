@@ -17,3 +17,5 @@ The commands supported are:
 - `list`: list all online clients
 - `/kickall`: kick everyone
 
+![](https://i.imgur.com/egLX2HT.png)
+![](https://i.imgur.com/UcjHJJD.png)
