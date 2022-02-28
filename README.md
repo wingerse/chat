@@ -1,4 +1,4 @@
-Chatroom server.  
+Chatroom client + server.  
 
 # client
 

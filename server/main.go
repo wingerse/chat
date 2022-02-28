@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/wsendon/chat/server/chat"
+	"github.com/wingerse/chat/server/chat"
 )
 
 func parseArgs() int {
@@ -53,6 +53,7 @@ func kickCommand(s *chat.Server, args []string) {
 	}
 	name := args[0]
 	if c, present := s.Clients[name]; present {
+		s.BroadcastMessage(c.Name + " has been kicked from the server")
 		s.RemoveClient(c)
 	} else {
 		fmt.Println("kick: there is no user online named " + name)
@@ -61,6 +62,7 @@ func kickCommand(s *chat.Server, args []string) {
 
 func allKickCommand(s *chat.Server, args []string) {
 	for _, c := range s.Clients {
+		s.BroadcastMessage(c.Name + " has been kicked from the server")
 		s.RemoveClient(c)
 	}
 }

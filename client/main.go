@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
 	"os"
 )
@@ -21,7 +20,8 @@ func main() {
 	go receiveMessages(conn)
 	go sendMessages(conn)
 	<-endChan
-	fmt.Println("Connection closed")
+	conn.Close()
+	fmt.Println("\rConnection closed")
 }
 
 func connect(serverIP string) (*net.TCPConn, error) {
@@ -33,23 +33,23 @@ func connect(serverIP string) (*net.TCPConn, error) {
 }
 
 func sendMessages(conn *net.TCPConn) {
+	fmt.Print("> ")
 	s := bufio.NewScanner(os.Stdin)
 	for s.Scan() {
 		_, e := conn.Write([]byte(s.Text() + "\n"))
 		if e != nil {
 			fmt.Println(e)
 		}
+		fmt.Print("> ")
 	}
 }
 
 func receiveMessages(conn *net.TCPConn) {
-	for {
-		_, e := io.Copy(os.Stdout, conn)
-		if e == nil {
-			endChan <- struct{}{}
-			return
-		}
+	s := bufio.NewScanner(conn)
+	for s.Scan() {
+		fmt.Print("\r" + s.Text() + "\n> ")
 	}
+	endChan <- struct{}{}
 }
 
 func getName() string {

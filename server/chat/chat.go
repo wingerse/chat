@@ -1,20 +1,22 @@
 package chat
 
-import "net"
-import "bufio"
-import "strconv"
-import "strings"
-import "fmt"
-import "log"
-import "os"
+import (
+	"bufio"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+)
 
 type message struct {
 	message string
 	client  *Client
 }
 
-func (m message) getFormatted() string {
-	return m.client.Name + ": " + m.message + "\n"
+func (m *message) String() string {
+	return m.client.Name + ": " + m.message
 }
 
 type nameCheck struct {
@@ -23,23 +25,24 @@ type nameCheck struct {
 }
 
 type Client struct {
-	Conn net.Conn
-	Name string
+	Conn     net.Conn
+	Name     string
+	SendChan chan string
 }
 
 // Server represents a chat server
 type Server struct {
-	L             net.Listener
-	Clients       map[string]*Client
-	messageChan   chan message
-	addedChan     chan *Client
-	removedChan   chan *Client
-	nameCheckChan chan nameCheck
-	cmdChan       chan Command
-	printChan     chan string
-	Port          uint16
-	Name          string
-	commands      map[string]Command
+	L                net.Listener
+	Clients          map[string]*Client
+	messageChan      chan message
+	addClientChan    chan *Client
+	removeClientChan chan *Client
+	nameCheckChan    chan nameCheck
+	cmdChan          chan Command
+	printChan        chan string
+	Port             uint16
+	Name             string
+	commands         map[string]Command
 }
 
 // NewServer starts listening, and returns an initialized server. If an error occured while listening started, (nil, error) is returned.
@@ -50,17 +53,17 @@ func NewServer(name string, port uint16) (*Server, error) {
 		return nil, e
 	}
 	return &Server{
-			L:             l,
-			Clients:       make(map[string]*Client),
-			messageChan:   make(chan message, 2),
-			addedChan:     make(chan *Client),
-			removedChan:   make(chan *Client),
-			nameCheckChan: make(chan nameCheck),
-			cmdChan:       make(chan Command),
-			printChan:     make(chan string, 10),
-			Port:          port,
-			Name:          name,
-			commands:      make(map[string]Command)},
+			L:                l,
+			Clients:          make(map[string]*Client),
+			messageChan:      make(chan message, 2),
+			addClientChan:    make(chan *Client),
+			removeClientChan: make(chan *Client),
+			nameCheckChan:    make(chan nameCheck),
+			cmdChan:          make(chan Command),
+			printChan:        make(chan string, 10),
+			Port:             port,
+			Name:             name,
+			commands:         make(map[string]Command)},
 		nil
 }
 
@@ -85,6 +88,53 @@ func (r *Server) Start() {
 	}
 }
 
+func (r *Server) handleClient(conn net.Conn) {
+	scanner := bufio.NewScanner(conn)
+	// first line is the name
+	if !scanner.Scan() {
+		return
+	}
+	name := strings.TrimSpace(scanner.Text())
+
+	r.nameCheckChan <- nameCheck{name: name}
+	if n := <-r.nameCheckChan; n.present {
+		conn.Write([]byte("A user with that name is already online. Choose another name\n"))
+		conn.Close()
+		return
+	}
+
+	c := &Client{conn, name, make(chan string)}
+	r.addClientChan <- c
+
+	go r.handleRecv(c, scanner)
+	go r.handleSend(c)
+}
+
+func (s *Server) handleRecv(c *Client, scanner *bufio.Scanner) {
+	for {
+		if !scanner.Scan() {
+			s.removeClientChan <- c
+			return
+		}
+		s.messageChan <- message{scanner.Text(), c}
+	}
+}
+
+func (s *Server) handleSend(c *Client) {
+	for {
+		message, ok := <-c.SendChan
+		if !ok {
+			c.Conn.Close()
+			return
+		}
+		_, e := c.Conn.Write([]byte(message + "\n"))
+		if e != nil {
+			s.removeClientChan <- c
+			return
+		}
+	}
+}
+
 func helpCommand(s *Server, args []string) {
 	fmt.Println("List of commands:")
 	for _, command := range s.commands {
@@ -99,7 +149,7 @@ func (r *Server) handleCommands() {
 		const invalidFormat = "Invalid command. Format /<command> args\n"
 		line := s.Text()
 		if !strings.HasPrefix(line, "/") {
-			r.printChan <- invalidFormat
+			r.BroadcastMessage("[Server Admin]: " + line)
 			continue
 		}
 		line = line[1:]
@@ -112,64 +162,33 @@ func (r *Server) handleCommands() {
 	}
 }
 
-func (r *Server) handleClient(conn net.Conn) {
-	scanner := bufio.NewScanner(conn)
-	if !scanner.Scan() {
-		return
-	}
-	name := strings.TrimSpace(scanner.Text())
-
-	r.nameCheckChan <- nameCheck{name: name}
-	if n := <-r.nameCheckChan; n.present {
-		conn.Write([]byte("A user with that name is already online. Choose another name\n"))
-		conn.Close()
-		return
-	}
-
-	c := &Client{conn, name}
-	r.addClientSafe(c)
-
-	for {
-		if !scanner.Scan() {
-			if scanner.Err() == nil {
-				r.RemoveClient(c)
-				return
-			}
-			if t, ok := scanner.Err().(net.Error); ok {
-				if t.Timeout() {
-					r.RemoveClient(c)
-					return
-				}
-			}
-			continue
-		}
-		r.messageChan <- message{scanner.Text(), c}
-	}
-}
-
 func (r *Server) handleMessages() {
 	for {
 		select {
 		case n := <-r.nameCheckChan:
-			_, present := r.Clients[n.name]
-			r.nameCheckChan <- nameCheck{n.name, present}
-		case c := <-r.addedChan:
+			if n.name == "[Server Admin]" {
+				n.present = true
+			} else {
+				_, present := r.Clients[n.name]
+				n.present = present
+			}
+			r.nameCheckChan <- n
+		case c := <-r.addClientChan:
 			r.AddClient(c)
 		case m := <-r.messageChan:
 			for _, c := range r.Clients {
 				if c != m.client {
-					go c.Conn.Write([]byte(m.getFormatted()))
+					c.SendChan <- m.String()
 				}
 			}
-			log.Print(m.getFormatted())
-		case c := <-r.removedChan:
+			log.Println(m.String())
+		case c := <-r.removeClientChan:
 			r.RemoveClient(c)
 		case s := <-r.printChan:
 			fmt.Print(s)
 		case c := <-r.cmdChan:
 			c.handler(r, c.args)
 		}
-
 	}
 }
 
@@ -183,36 +202,27 @@ func (r *Server) executeCommand(name string, args []string) {
 	}
 }
 
-func (r *Server) PublishMessage(msg string) {
+func (r *Server) BroadcastMessage(msg string) {
 	for _, c := range r.Clients {
-		go c.Conn.Write([]byte(msg))
+		c.SendChan <- msg
 	}
 }
 
 func (r *Server) AddClient(c *Client) {
 	r.Clients[c.Name] = c
-	r.PublishMessage(c.Name + " has connected to the server\n")
+	r.BroadcastMessage(c.Name + " has connected to the server")
 	log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has connected to the server")
-}
-
-func (r *Server) addClientSafe(c *Client) {
-	r.addedChan <- c
-}
-
-func (r *Server) removeClientSafe(c *Client) {
-	r.removedChan <- c
 }
 
 // RemoveClient removes the specified client from the server. It disconnects the client, as well as remove it from the server's list.
 func (r *Server) RemoveClient(c *Client) {
-	for n, cl := range r.Clients {
-		if cl == c {
-			delete(r.Clients, n)
-			cl.Conn.Close()
-			r.PublishMessage(c.Name + " has disconnected from the server\n")
-			log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has disconnected from the server")
-		}
+	if _, ok := r.Clients[c.Name]; !ok {
+		return
 	}
+	delete(r.Clients, c.Name)
+	close(c.SendChan)
+	r.BroadcastMessage(c.Name + " has disconnected from the server")
+	log.Println(c.Name + "(" + c.Conn.RemoteAddr().String() + ")" + " has disconnected from the server")
 }
 
 // Command is a data struct holding information about a command.
